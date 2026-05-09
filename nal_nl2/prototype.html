@@ -1,0 +1,1361 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PC 音频补偿 - NAL-NL2</title>
+<style>
+  :root {
+    --bg: #0d1117;
+    --surface: #161b22;
+    --border: #30363d;
+    --text: #e6edf3;
+    --text-secondary: #8b949e;
+    --accent: #58a6ff;
+    --accent-green: #3fb950;
+    --accent-red: #f85149;
+    --accent-orange: #d2991d;
+    --slider-track: #21262d;
+    --slider-fill: #1f6feb;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    padding: 24px;
+    min-height: 100vh;
+    display: flex;
+    justify-content: center;
+  }
+
+  .app {
+    max-width: 900px;
+    width: 100%;
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+  }
+
+  /* ── Header ── */
+  .header {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    padding-bottom: 16px;
+    border-bottom: 1px solid var(--border);
+  }
+  .header .icon {
+    width: 42px; height: 42px;
+    background: linear-gradient(135deg, #1f6feb, #3fb950);
+    border-radius: 12px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 22px;
+  }
+  .header h1 { font-size: 20px; font-weight: 600; }
+  .header .sub { font-size: 12px; color: var(--text-secondary); }
+
+  /* ── Cards ── */
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 20px;
+  }
+  .card-title {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-bottom: 16px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .card-title .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); }
+
+  /* ── Audiogram Table ── */
+  .audio-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  .audio-table th {
+    font-weight: 500; color: var(--text-secondary);
+    padding: 8px 6px; text-align: center;
+    border-bottom: 1px solid var(--border);
+  }
+  .audio-table th:first-child { text-align: left; padding-left: 0; }
+  .audio-table td {
+    padding: 4px 6px; text-align: center;
+  }
+  .audio-table td:first-child {
+    text-align: left; padding-left: 0;
+    font-weight: 500; color: var(--text-secondary);
+  }
+  .audio-table input {
+    width: 52px; padding: 6px 4px;
+    background: var(--bg); border: 1px solid var(--border);
+    border-radius: 6px; color: var(--text); text-align: center;
+    font-size: 13px; font-family: inherit;
+    transition: border-color 0.15s;
+  }
+  .audio-table input:focus {
+    outline: none; border-color: var(--accent); box-shadow: 0 0 0 2px rgba(88,166,255,0.15);
+  }
+  .ear-label { color: var(--text-secondary); font-size: 12px; }
+
+  /* ── Slider row ── */
+  .slider-row {
+    display: flex; align-items: center; gap: 8px; padding: 4px 0;
+  }
+  .slider-row .freq-label {
+    width: 42px; font-size: 11px; color: var(--text-secondary); text-align: right;
+  }
+  .slider-row input[type="range"] {
+    flex: 1; -webkit-appearance: none; height: 6px;
+    background: var(--slider-track); border-radius: 3px; outline: none;
+  }
+  .slider-row input[type="range"]::-webkit-slider-thumb {
+    -webkit-appearance: none; width: 16px; height: 16px;
+    border-radius: 50%; background: var(--accent); cursor: pointer;
+    border: 2px solid var(--surface);
+  }
+  .slider-row .val {
+    width: 32px; font-size: 12px; text-align: center; font-weight: 500;
+  }
+
+  /* ── Gain Plot ── */
+  .plot-container {
+    position: relative; width: 100%; height: 220px;
+    background: var(--bg); border-radius: 8px; overflow: hidden;
+  }
+  .plot-container canvas { width: 100%; height: 100%; }
+
+  /* ── Config chips ── */
+  .config-row {
+    display: flex; gap: 24px; flex-wrap: wrap; align-items: center;
+  }
+  .config-group { display: flex; align-items: center; gap: 8px; }
+  .config-label { font-size: 12px; color: var(--text-secondary); }
+  .chip-group { display: flex; gap: 2px; }
+  .chip {
+    padding: 5px 12px; font-size: 12px; border-radius: 6px;
+    border: 1px solid var(--border); cursor: pointer;
+    background: var(--bg); color: var(--text-secondary);
+    transition: all 0.15s; user-select: none;
+  }
+  .chip.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+  .chip:hover:not(.active) { border-color: var(--text-secondary); }
+
+  /* ── Controls bar ── */
+  .control-bar {
+    display: flex; align-items: center; gap: 16px;
+    padding: 16px 20px;
+  }
+  .btn {
+    padding: 10px 24px; border-radius: 8px; font-size: 14px; font-weight: 600;
+    border: none; cursor: pointer; transition: all 0.15s;
+    display: flex; align-items: center; gap: 8px;
+  }
+  .btn-start {
+    background: var(--accent-green); color: #fff;
+  }
+  .btn-start:hover { filter: brightness(1.1); }
+  .btn-stop {
+    background: var(--accent-red); color: #fff;
+  }
+  .btn-stop:hover { filter: brightness(1.1); }
+
+  .device-select {
+    display: flex; align-items: center; gap: 8px; font-size: 12px;
+    color: var(--text-secondary); margin-left: auto;
+  }
+  .device-select select {
+    background: var(--bg); border: 1px solid var(--border);
+    color: var(--text); padding: 6px 10px; border-radius: 6px;
+    font-size: 12px; font-family: inherit;
+  }
+
+  /* ── Status bar ── */
+  .status-bar {
+    display: flex; gap: 24px; font-size: 12px; color: var(--text-secondary);
+  }
+  .status-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; margin-right: 6px; }
+  .status-dot.on { background: var(--accent-green); }
+  .status-dot.off { background: var(--border); }
+
+  /* ── Tabs ── */
+  .tabs { display: flex; gap: 4px; margin-bottom: 16px; }
+  .tab {
+    padding: 6px 14px; font-size: 12px; border-radius: 6px;
+    cursor: pointer; color: var(--text-secondary);
+    transition: all 0.15s;
+  }
+  .tab.active { background: var(--accent); color: #fff; }
+  .tab:hover:not(.active) { color: var(--text); }
+
+  /* ── Import button ── */
+  .import-actions {
+    display: flex; gap: 8px; margin-left: auto; align-items: center;
+  }
+  .btn-import {
+    padding: 6px 14px; border-radius: 6px; font-size: 12px; font-weight: 500;
+    border: 1px dashed var(--border); cursor: pointer;
+    background: transparent; color: var(--text-secondary);
+    transition: all 0.15s; font-family: inherit;
+    display: flex; align-items: center; gap: 6px;
+  }
+  .btn-import:hover { border-color: var(--accent); color: var(--accent); }
+  .btn-download {
+    padding: 6px 14px; border-radius: 6px; font-size: 12px; font-weight: 500;
+    border: 1px solid var(--border); cursor: pointer;
+    background: transparent; color: var(--text-secondary);
+    transition: all 0.15s; font-family: inherit;
+    display: flex; align-items: center; gap: 6px;
+  }
+  .btn-download:hover { border-color: var(--accent); color: var(--accent); }
+
+  /* ── Drop zone ── */
+  .drop-overlay {
+    position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+    background: rgba(13,17,23,0.92);
+    display: flex; align-items: center; justify-content: center;
+    z-index: 1000; pointer-events: none; opacity: 0; transition: opacity 0.2s;
+  }
+  .drop-overlay.active { opacity: 1; }
+  .drop-box {
+    padding: 48px 72px; border: 3px dashed var(--accent); border-radius: 16px;
+    text-align: center; color: var(--accent);
+  }
+  .drop-box .drop-icon { font-size: 48px; margin-bottom: 12px; }
+  .drop-box .drop-text { font-size: 16px; font-weight: 500; }
+
+  /* ── Toast ── */
+  .toast {
+    position: fixed; bottom: 40px; left: 50%; transform: translateX(-50%);
+    padding: 12px 24px; border-radius: 8px; font-size: 13px; font-weight: 500;
+    z-index: 2000; animation: toastIn 0.3s ease, toastOut 0.3s ease 2.5s forwards;
+    pointer-events: none;
+  }
+  .toast.success { background: #1a3a2a; color: #3fb950; border: 1px solid #3fb950; }
+  .toast.error { background: #3a1a1a; color: #f85149; border: 1px solid #f85149; }
+  @keyframes toastIn { from { opacity: 0; transform: translateX(-50%) translateY(16px); } to { opacity: 1; transform: translateX(-50%) translateY(0); } }
+  @keyframes toastOut { from { opacity: 1; } to { opacity: 0; } }
+
+  /* ── Card header with actions ── */
+  .card-header-row { display: flex; align-items: center; margin-bottom: 16px; }
+  .card-header-row .card-title { margin-bottom: 0; }
+
+  /* ── Preset quick-select ── */
+  .preset-row {
+    display: flex; gap: 8px; margin-bottom: 12px; flex-wrap: wrap;
+    padding-bottom: 12px; border-bottom: 1px solid var(--border);
+  }
+  .preset-chip {
+    padding: 4px 10px; border-radius: 12px; font-size: 11px;
+    border: 1px solid var(--border); cursor: pointer;
+    background: var(--bg); color: var(--text-secondary);
+    transition: all 0.15s;
+  }
+  .preset-chip:hover { border-color: var(--accent); color: var(--accent); }
+  .preset-chip .label { color: var(--text); font-weight: 500; }
+
+  /* ── Photo Import Modal ── */
+  .modal-overlay {
+    position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+    background: rgba(0,0,0,0.85); z-index: 2000;
+    display: flex; align-items: center; justify-content: center;
+    animation: fadeIn 0.2s ease;
+  }
+  @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+  .modal {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 16px; width: 90vw; max-width: 960px;
+    max-height: 90vh; display: flex; flex-direction: column;
+    overflow: hidden;
+  }
+  .modal-header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 16px 20px; border-bottom: 1px solid var(--border);
+  }
+  .modal-header h2 { font-size: 16px; font-weight: 600; }
+  .modal-close {
+    width: 32px; height: 32px; border-radius: 8px; border: 1px solid var(--border);
+    background: transparent; color: var(--text-secondary); font-size: 18px;
+    cursor: pointer; display: flex; align-items: center; justify-content: center;
+    transition: all 0.15s;
+  }
+  .modal-close:hover { background: var(--accent-red); color: #fff; border-color: var(--accent-red); }
+  .modal-body { padding: 20px; overflow-y: auto; flex: 1; }
+  .modal-footer { padding: 12px 20px; border-top: 1px solid var(--border); display: flex; gap: 10px; justify-content: flex-end; }
+
+  .photo-dropzone {
+    border: 2px dashed var(--border); border-radius: 12px;
+    padding: 60px 40px; text-align: center; cursor: pointer;
+    transition: all 0.2s; color: var(--text-secondary);
+  }
+  .photo-dropzone:hover, .photo-dropzone.drag { border-color: var(--accent); color: var(--accent); background: rgba(88,166,255,0.05); }
+  .photo-dropzone .dz-icon { font-size: 56px; margin-bottom: 12px; }
+  .photo-dropzone .dz-text { font-size: 15px; font-weight: 500; }
+  .photo-dropzone .dz-hint { font-size: 12px; margin-top: 6px; }
+
+  .photo-workspace { display: none; gap: 16px; }
+  .photo-canvas-area {
+    flex: 1; position: relative; border: 1px solid var(--border);
+    border-radius: 12px; overflow: hidden; background: #000;
+    min-height: 420px; cursor: crosshair;
+  }
+  .photo-canvas-area img { max-width: 100%; max-height: 400px; display: block; margin: 0 auto; }
+  .photo-canvas-area canvas { position: absolute; top: 0; left: 0; width: 100%; height: 100%; }
+  .photo-sidebar {
+    width: 240px; display: flex; flex-direction: column; gap: 12px;
+  }
+  .photo-sidebar .side-title { font-size: 12px; font-weight: 600; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.5px; }
+  .photo-sidebar .point-list {
+    flex: 1; overflow-y: auto; font-size: 12px;
+    display: flex; flex-direction: column; gap: 4px;
+  }
+  .point-item {
+    display: flex; align-items: center; gap: 8px; padding: 6px 8px;
+    background: var(--bg); border-radius: 6px; border: 1px solid transparent;
+  }
+  .point-item.current { border-color: var(--accent); }
+  .point-dot { width: 12px; height: 12px; border-radius: 50%; flex-shrink: 0; }
+  .point-info { flex: 1; }
+  .point-delete { cursor: pointer; color: var(--text-secondary); font-size: 14px; opacity: 0; transition: opacity 0.15s; }
+  .point-item:hover .point-delete { opacity: 1; }
+  .point-delete:hover { color: var(--accent-red); }
+
+  .btn-photo {
+    padding: 6px 14px; border-radius: 6px; font-size: 12px; font-weight: 500;
+    border: 1px solid var(--accent-orange); cursor: pointer;
+    background: transparent; color: var(--accent-orange);
+    transition: all 0.15s; font-family: inherit;
+    display: flex; align-items: center; gap: 6px;
+  }
+  .btn-photo:hover { background: rgba(210,153,29,0.1); }
+
+  .instruction-banner {
+    padding: 8px 12px; border-radius: 8px; font-size: 12px;
+    background: rgba(88,166,255,0.08); color: var(--accent);
+    border: 1px solid rgba(88,166,255,0.2); margin-bottom: 8px;
+  }
+  .instruction-banner .step { display: inline-block; width: 18px; height: 18px; border-radius: 50%; background: var(--accent); color: #fff; text-align: center; line-height: 18px; font-size: 10px; font-weight: 700; margin-right: 4px; }
+</style>
+</head>
+<body>
+<div class="app">
+
+  <!-- Header -->
+  <div class="header">
+    <div class="icon">🎧</div>
+    <div>
+      <h1>PC 音频补偿</h1>
+      <div class="sub">基于 NAL-NL2 处方公式 · 个性化听力补偿</div>
+    </div>
+  </div>
+
+  <!-- Audiogram Card -->
+  <div class="card" id="audiogramCard">
+    <div class="card-header-row">
+      <div class="card-title"><span class="dot"></span> 听力图输入</div>
+      <div class="import-actions">
+        <button class="btn-download" onclick="downloadSample()" title="下载示例 CSV">📄 示例</button>
+        <button class="btn-import" onclick="document.getElementById('fileInput').click()">📥 导入 CSV</button>
+        <button class="btn-photo" onclick="openPhotoModal()">📷 识别照片</button>
+        <input type="file" id="fileInput" accept=".csv,.json,.txt" style="display:none" onchange="handleFileImport(event)">
+        <input type="file" id="photoInput" accept="image/*" style="display:none" onchange="handlePhotoSelect(event)">
+      </div>
+    </div>
+
+    <!-- Presets -->
+    <div class="preset-row">
+      <span style="font-size:11px;color:var(--text-secondary);line-height:22px;">快速预设:</span>
+      <span class="preset-chip" onclick="applyPreset('normal')"><span class="label">正常听力</span> 全 0dB</span>
+      <span class="preset-chip" onclick="applyPreset('mild')"><span class="label">轻度听损</span> 高频 30-40dB</span>
+      <span class="preset-chip" onclick="applyPreset('moderate')"><span class="label">中度听损</span> 高频 50-60dB</span>
+      <span class="preset-chip" onclick="applyPreset('severe')"><span class="label">重度听损</span> 高频 70-85dB</span>
+    </div>
+
+    <!-- Tab: Table / Slider -->
+    <div class="tabs">
+      <div class="tab active" onclick="switchTab('table')">📋 表格输入</div>
+      <div class="tab" onclick="switchTab('slider')">🎚️ 滑块输入</div>
+    </div>
+
+    <!-- Table view -->
+    <div id="view-table">
+      <table class="audio-table">
+        <thead>
+          <tr>
+            <th></th>
+            <th>125 Hz</th><th>250 Hz</th><th>500 Hz</th><th>750 Hz</th>
+            <th>1 kHz</th><th>1.5 kHz</th><th>2 kHz</th><th>3 kHz</th>
+            <th>4 kHz</th><th>6 kHz</th><th>8 kHz</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td class="ear-label">🔵 左耳</td>
+            <td><input type="number" value="0" min="0" max="120" onchange="updateAll()"></td>
+            <td><input type="number" value="0" min="0" max="120" onchange="updateAll()"></td>
+            <td><input type="number" value="5" min="0" max="120" onchange="updateAll()"></td>
+            <td><input type="number" value="10" min="0" max="120" onchange="updateAll()"></td>
+            <td><input type="number" value="15" min="0" max="120" onchange="updateAll()"></td>
+            <td><input type="number" value="25" min="0" max="120" onchange="updateAll()"></td>
+            <td><input type="number" value="35" min="0" max="120" onchange="updateAll()"></td>
+            <td><input type="number" value="45" min="0" max="120" onchange="updateAll()"></td>
+            <td><input type="number" value="50" min="0" max="120" onchange="updateAll()"></td>
+            <td><input type="number" value="55" min="0" max="120" onchange="updateAll()"></td>
+            <td><input type="number" value="60" min="0" max="120" onchange="updateAll()"></td>
+          </tr>
+          <tr>
+            <td class="ear-label">🔴 右耳</td>
+            <td><input type="number" value="0" min="0" max="120" onchange="updateAll()"></td>
+            <td><input type="number" value="0" min="0" max="120" onchange="updateAll()"></td>
+            <td><input type="number" value="5" min="0" max="120" onchange="updateAll()"></td>
+            <td><input type="number" value="10" min="0" max="120" onchange="updateAll()"></td>
+            <td><input type="number" value="20" min="0" max="120" onchange="updateAll()"></td>
+            <td><input type="number" value="30" min="0" max="120" onchange="updateAll()"></td>
+            <td><input type="number" value="40" min="0" max="120" onchange="updateAll()"></td>
+            <td><input type="number" value="50" min="0" max="120" onchange="updateAll()"></td>
+            <td><input type="number" value="55" min="0" max="120" onchange="updateAll()"></td>
+            <td><input type="number" value="60" min="0" max="120" onchange="updateAll()"></td>
+            <td><input type="number" value="55" min="0" max="120" onchange="updateAll()"></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <!-- Slider view -->
+    <div id="view-slider" style="display:none;">
+      <div class="slider-row" style="color:var(--text-secondary);font-size:11px;padding-left:50px;">
+        <span style="width:32px;"></span>
+        <span style="flex:1;text-align:left;">125</span>
+        <span style="flex:1;text-align:left;">250</span>
+        <span style="flex:1;text-align:left;">500</span>
+        <span style="flex:1;text-align:left;">750</span>
+        <span style="flex:1;text-align:left;">1k</span>
+        <span style="flex:1;text-align:left;">1.5k</span>
+        <span style="flex:1;text-align:left;">2k</span>
+        <span style="flex:1;text-align:left;">3k</span>
+        <span style="flex:1;text-align:left;">4k</span>
+        <span style="flex:1;text-align:left;">6k</span>
+        <span style="flex:1;text-align:left;">8k</span>
+      </div>
+      <div style="margin-top:8px;">
+        <span style="font-size:11px;color:var(--accent);">🔵 左耳</span>
+        <div id="sliders-left"></div>
+      </div>
+      <div style="margin-top:8px;">
+        <span style="font-size:11px;color:var(--accent-red);">🔴 右耳</span>
+        <div id="sliders-right"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Gain Curve -->
+  <div class="card">
+    <div class="card-title"><span class="dot"></span> 增益曲线预览 (NAL-NL2)</div>
+    <div class="plot-container">
+      <canvas id="gainCanvas"></canvas>
+    </div>
+    <div style="display:flex;gap:24px;margin-top:8px;font-size:11px;color:var(--text-secondary);">
+      <span>🔵 左耳增益</span><span>🔴 右耳增益</span>
+      <span style="margin-left:auto;">压缩比: 左 1.0–2.2 | 右 1.0–2.0</span>
+    </div>
+  </div>
+
+  <!-- Config -->
+  <div class="card">
+    <div class="card-title"><span class="dot"></span> 验配参数</div>
+    <div class="config-row">
+      <div class="config-group">
+        <span class="config-label">助听模式</span>
+        <div class="chip-group">
+          <div class="chip active" onclick="toggleChip(this)">🦻 双耳</div>
+          <div class="chip" onclick="toggleChip(this)">👂 单耳</div>
+        </div>
+      </div>
+      <div class="config-group">
+        <span class="config-label">性别</span>
+        <div class="chip-group">
+          <div class="chip active" onclick="toggleChip(this)">♂ 男</div>
+          <div class="chip" onclick="toggleChip(this)">♀ 女</div>
+        </div>
+      </div>
+      <div class="config-group">
+        <span class="config-label">经验</span>
+        <div class="chip-group">
+          <div class="chip active" onclick="toggleChip(this)">🆕 新用户</div>
+          <div class="chip" onclick="toggleChip(this)">✅ 老用户</div>
+        </div>
+      </div>
+      <div class="config-group">
+        <span class="config-label">年龄</span>
+        <div class="chip-group">
+          <div class="chip active" onclick="toggleChip(this)">🧑 成人</div>
+          <div class="chip" onclick="toggleChip(this)">👶 儿童</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Controls -->
+  <div class="card control-bar">
+    <button class="btn btn-start" onclick="toggleRunning()" id="btnStart">▶ 开始处理</button>
+    <button class="btn btn-stop" onclick="toggleRunning()" id="btnStop" style="display:none;">■ 停止</button>
+    <div class="device-select">
+      <span>输入(环回)</span>
+      <select>
+        <option>Speakers (Realtek Audio)</option>
+        <option>Headphones (USB Audio)</option>
+      </select>
+      <span>输出</span>
+      <select>
+        <option>Headphones (SteelSeries)</option>
+        <option>Speakers (Realtek Audio)</option>
+      </select>
+    </div>
+  </div>
+
+  <!-- Status bar -->
+  <div class="status-bar">
+    <span id="statusIndicator"><span class="status-dot off"></span> 已停止</span>
+    <span>延迟: — ms</span>
+    <span>CPU: — %</span>
+    <span>输入峰值: — dB</span>
+  </div>
+
+  <!-- Drop overlay -->
+  <div class="drop-overlay" id="dropOverlay">
+    <div class="drop-box">
+      <div class="drop-icon">📂</div>
+      <div class="drop-text">释放文件以导入听力图</div>
+      <div style="font-size:13px;color:var(--text-secondary);margin-top:6px;">支持 CSV / JSON / 纯文本</div>
+    </div>
+  </div>
+
+  <!-- Toast container -->
+  <div id="toastContainer"></div>
+
+</div>
+
+<!-- ═══════════ 照片识别弹窗 ═══════════ -->
+<div id="photoModal" style="display:none;">
+  <div class="modal-overlay" onclick="event.target===this && closePhotoModal()">
+    <div class="modal">
+      <div class="modal-header">
+        <h2>📷 听力图照片识别</h2>
+        <button class="modal-close" onclick="closePhotoModal()">✕</button>
+      </div>
+      <div class="modal-body">
+        <!-- Drop zone (before image loaded) -->
+        <div class="photo-dropzone" id="photoDropzone"
+             onclick="document.getElementById('photoInput').click()"
+             ondragover="event.preventDefault(); this.classList.add('drag')"
+             ondragleave="this.classList.remove('drag')"
+             ondrop="handlePhotoDrop(event)">
+          <div class="dz-icon">🖼️</div>
+          <div class="dz-text">点击上传或拖放听力图照片</div>
+          <div class="dz-hint">支持 JPG / PNG / WEBP，建议清晰正面拍摄</div>
+        </div>
+
+        <!-- Workspace (after image loaded) -->
+        <div class="photo-workspace" id="photoWorkspace">
+          <div class="instruction-banner">
+            <span class="step">1</span> 先在图上<b>点击右耳标记点</b>（通常为红色 ○），沿曲线从低频到高频依次点击
+            &nbsp;&nbsp;
+            <span class="step">2</span> 再切换为<b>左耳标记点</b>（通常为蓝色 ×），同样依次点击
+            &nbsp;&nbsp;
+            <span class="step">3</span> 点击「应用数据」
+          </div>
+          <div style="display:flex;gap:16px;">
+            <div class="photo-canvas-area" id="photoCanvasArea">
+              <img id="photoImage" alt="听力图照片" style="display:none;">
+              <canvas id="photoCanvas"></canvas>
+            </div>
+            <div class="photo-sidebar">
+              <div class="side-title">当前标记: <span id="currentEarLabel" style="color:#f85149;">🔴 右耳</span></div>
+              <div style="display:flex;gap:4px;">
+                <button class="chip active" id="btnEarRight" onclick="switchEar('right')" style="width:100%;">🔴 右耳</button>
+                <button class="chip" id="btnEarLeft" onclick="switchEar('left')" style="width:100%;">🔵 左耳</button>
+              </div>
+              <div class="side-title" style="margin-top:8px;">已标记点</div>
+              <div class="point-list" id="pointList">
+                <div style="color:var(--text-secondary);font-size:11px;text-align:center;padding:20px;">
+                  在左侧图片上点击<br>来标记听阈点
+                </div>
+              </div>
+              <button class="btn-import" style="width:100%;margin-top:8px;color:var(--accent-red);" onclick="clearCurrentPoints()">
+                🗑 清除当前耳标记
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn-download" onclick="document.getElementById('photoInput').click()">🔄 更换图片</button>
+        <button class="btn-download" onclick="clearAllPoints()">🗑 全部清除</button>
+        <div style="flex:1;"></div>
+        <button class="btn-download" onclick="closePhotoModal()">取消</button>
+        <button class="btn btn-start" onclick="applyPhotoData()" id="btnApplyPhoto">✅ 应用数据</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+  const FREQS = [125, 250, 500, 750, 1000, 1500, 2000, 3000, 4000, 6000, 8000];
+  let running = false;
+  let leftValues  = [0, 0, 5, 10, 15, 25, 35, 45, 50, 55, 60];
+  let rightValues = [0, 0, 5, 10, 20, 30, 40, 50, 55, 60, 55];
+
+  // ── Simplified NAL-NL2 gain calculation ──
+  const A_COEFFS = [0.35, 0.38, 0.42, 0.45, 0.48, 0.50, 0.52, 0.52, 0.50, 0.45, 0.40];
+  const B_COEFFS = [-2.0, -1.5, -1.0, -0.5, 0.0, 1.0, 2.0, 3.0, 3.5, 4.0, 4.5];
+
+  function calcGain(htValues) {
+    let gains = htValues.map((ht, i) => {
+      let g = A_COEFFS[i] * ht + B_COEFFS[i];
+      if (document.querySelector('.chip-group:nth-child(1) .chip.active')?.textContent.includes('双耳')) g -= 3;
+      if (document.querySelector('.chip-group:nth-child(2) .chip.active')?.textContent.includes('女')) g += 2;
+      if (document.querySelector('.chip-group:nth-child(3) .chip.active')?.textContent.includes('老用户')) g += 3;
+      if (document.querySelector('.chip-group:nth-child(4) .chip.active')?.textContent.includes('儿童')) g += 5;
+      return Math.max(0, g);
+    });
+    // Smooth
+    let smoothed = [...gains];
+    for (let i = 1; i < gains.length - 1; i++) {
+      smoothed[i] = (gains[i-1] + gains[i] + gains[i+1]) / 3;
+    }
+    return smoothed;
+  }
+
+  // ── Canvas drawing ──
+  function drawPlot() {
+    const canvas = document.getElementById('gainCanvas');
+    const dpr = window.devicePixelRatio || 1;
+    const rect = canvas.parentElement.getBoundingClientRect();
+    canvas.width = rect.width * dpr;
+    canvas.height = rect.height * dpr;
+    canvas.style.width = rect.width + 'px';
+    canvas.style.height = rect.height + 'px';
+    const ctx = canvas.getContext('2d');
+    ctx.scale(dpr, dpr);
+    const W = rect.width, H = rect.height;
+    ctx.clearRect(0, 0, W, H);
+
+    const pad = { top: 24, right: 24, bottom: 36, left: 36 };
+    const pw = W - pad.left - pad.right, ph = H - pad.top - pad.bottom;
+    const maxGain = 45;
+
+    // Grid
+    ctx.strokeStyle = '#21262d'; ctx.lineWidth = 1;
+    for (let g = 0; g <= maxGain; g += 5) {
+      const y = pad.top + ph * (1 - g / maxGain);
+      ctx.beginPath(); ctx.moveTo(pad.left, y); ctx.lineTo(W - pad.right, y); ctx.stroke();
+      ctx.fillStyle = '#8b949e'; ctx.font = '10px system-ui'; ctx.textAlign = 'right';
+      ctx.fillText(g + ' dB', pad.left - 6, y + 3);
+    }
+    FREQS.forEach((f, i) => {
+      const x = pad.left + (pw * i) / (FREQS.length - 1);
+      ctx.beginPath(); ctx.moveTo(x, pad.top); ctx.lineTo(x, H - pad.bottom); ctx.stroke();
+      ctx.fillStyle = '#8b949e'; ctx.textAlign = 'center';
+      const label = f >= 1000 ? (f/1000).toFixed(f===1500?1:0) + 'k' : f;
+      ctx.fillText(label, x, H - pad.bottom + 16);
+    });
+
+    // Gains
+    const drawLine = (values, color) => {
+      const gains = calcGain(values);
+      ctx.strokeStyle = color; ctx.lineWidth = 2.5;
+      ctx.beginPath();
+      gains.forEach((g, i) => {
+        const x = pad.left + (pw * i) / (FREQS.length - 1);
+        const y = pad.top + ph * (1 - Math.min(g, maxGain) / maxGain);
+        if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+      });
+      ctx.stroke();
+
+      // Dots
+      gains.forEach((g, i) => {
+        const x = pad.left + (pw * i) / (FREQS.length - 1);
+        const y = pad.top + ph * (1 - Math.min(g, maxGain) / maxGain);
+        ctx.fillStyle = color;
+        ctx.beginPath(); ctx.arc(x, y, 4, 0, Math.PI * 2); ctx.fill();
+      });
+    };
+
+    drawLine(leftValues, '#58a6ff');
+    drawLine(rightValues, '#f85149');
+
+    // Legend
+    ctx.fillStyle = '#58a6ff';
+    ctx.fillRect(pad.left + 60, 12, 12, 3);
+    ctx.fillStyle = '#e6edf3'; ctx.font = '11px system-ui'; ctx.textAlign = 'left';
+    ctx.fillText('左耳增益', pad.left + 78, 16);
+    ctx.fillStyle = '#f85149';
+    ctx.fillRect(pad.left + 150, 12, 12, 3);
+    ctx.fillStyle = '#e6edf3';
+    ctx.fillText('右耳增益', pad.left + 168, 16);
+  }
+
+  // ── Sliders ──
+  function buildSliders() {
+    ['left', 'right'].forEach(side => {
+      const container = document.getElementById('sliders-' + side);
+      const values = side === 'left' ? leftValues : rightValues;
+      container.innerHTML = '';
+      FREQS.forEach((f, i) => {
+        const row = document.createElement('div');
+        row.className = 'slider-row';
+        row.innerHTML = `
+          <span class="freq-label">${f >= 1000 ? (f/1000).toFixed(f===1500?1:0)+'k' : f}</span>
+          <input type="range" min="0" max="120" value="${values[i]}" data-side="${side}" data-idx="${i}">
+          <span class="val">${values[i]}</span>
+        `;
+        row.querySelector('input').addEventListener('input', (e) => {
+          const idx = +e.target.dataset.idx;
+          const val = +e.target.value;
+          if (e.target.dataset.side === 'left') leftValues[idx] = val;
+          else rightValues[idx] = val;
+          row.querySelector('.val').textContent = val;
+          syncTable();
+          drawPlot();
+        });
+        container.appendChild(row);
+      });
+    });
+  }
+
+  function syncTable() {
+    const inputs = document.querySelectorAll('.audio-table tbody input');
+    [...inputs].forEach((inp, i) => {
+      const row = Math.floor(i / 11);
+      const col = i % 11;
+      inp.value = row === 0 ? leftValues[col] : rightValues[col];
+    });
+  }
+
+  // ── Tabs ──
+  function switchTab(name) {
+    document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+    event.target.classList.add('active');
+    document.getElementById('view-table').style.display = name === 'table' ? '' : 'none';
+    document.getElementById('view-slider').style.display = name === 'slider' ? '' : 'none';
+    if (name === 'slider') buildSliders();
+  }
+
+  // ── Chips ──
+  function toggleChip(el) {
+    el.parentElement.querySelectorAll('.chip').forEach(c => c.classList.remove('active'));
+    el.classList.add('active');
+    drawPlot();
+  }
+
+  // ── Inputs → Canvas ──
+  function updateAll() {
+    const inputs = document.querySelectorAll('.audio-table tbody input');
+    [...inputs].forEach((inp, i) => {
+      const row = Math.floor(i / 11);
+      const col = i % 11;
+      const val = Math.max(0, Math.min(120, parseInt(inp.value) || 0));
+      inp.value = val;
+      if (row === 0) leftValues[col] = val;
+      else rightValues[col] = val;
+    });
+    drawPlot();
+  }
+
+  // ── Start/Stop ──
+  function toggleRunning() {
+    running = !running;
+    document.getElementById('btnStart').style.display = running ? 'none' : '';
+    document.getElementById('btnStop').style.display = running ? '' : 'none';
+    const dot = document.querySelector('#statusIndicator .status-dot');
+    dot.className = running ? 'status-dot on' : 'status-dot off';
+    document.getElementById('statusIndicator').innerHTML =
+      (running ? '<span class="status-dot on"></span> 运行中' : '<span class="status-dot off"></span> 已停止');
+    const statusBar = document.querySelector('.status-bar');
+    if (running) {
+      statusBar.children[1].textContent = '延迟: 28 ms';
+      statusBar.children[2].textContent = 'CPU: 2.8%';
+      statusBar.children[3].textContent = '输入峰值: -12.4 dB';
+    } else {
+      statusBar.children[1].textContent = '延迟: — ms';
+      statusBar.children[2].textContent = 'CPU: — %';
+      statusBar.children[3].textContent = '输入峰值: — dB';
+    }
+  }
+
+  // ── Resize ──
+  window.addEventListener('resize', drawPlot);
+
+  // ════════════════════════════════════════
+  //  导入功能
+  // ════════════════════════════════════════
+
+  function showToast(msg, type = 'success') {
+    const container = document.getElementById('toastContainer');
+    const toast = document.createElement('div');
+    toast.className = 'toast ' + type;
+    toast.textContent = msg;
+    container.appendChild(toast);
+    setTimeout(() => toast.remove(), 3000);
+  }
+
+  // ── 预设 ──
+  function applyPreset(type) {
+    const presets = {
+      normal:   { L: [0,0,0,0,0,0,0,0,0,0,0],  R: [0,0,0,0,0,0,0,0,0,0,0] },
+      mild:     { L: [5,5,10,15,20,25,30,35,40,40,35], R: [5,5,10,15,20,30,35,40,40,35,30] },
+      moderate: { L: [10,15,20,30,35,45,50,55,60,55,50], R: [10,15,20,30,35,50,55,60,55,50,45] },
+      severe:   { L: [20,25,35,45,55,65,70,75,80,85,80], R: [20,25,35,45,55,70,75,80,85,80,75] }
+    };
+    const p = presets[type];
+    if (!p) return;
+    leftValues = [...p.L];
+    rightValues = [...p.R];
+    syncTable();
+    if (document.getElementById('view-slider').style.display !== 'none') buildSliders();
+    drawPlot();
+    const names = { normal: '正常听力', mild: '轻度听损', moderate: '中度听损', severe: '重度听损' };
+    showToast('✅ 已加载预设: ' + names[type]);
+  }
+
+  // ── 下载示例 CSV ──
+  function downloadSample() {
+    const rows = [
+      'Frequency(Hz),Left Ear(dB HL),Right Ear(dB HL)',
+      '125,10,10',
+      '250,15,15',
+      '500,20,25',
+      '750,25,30',
+      '1000,30,35',
+      '1500,40,45',
+      '2000,50,55',
+      '3000,55,60',
+      '4000,60,65',
+      '6000,65,60',
+      '8000,60,55'
+    ];
+    const blob = new Blob(['\uFEFF' + rows.join('\n')], { type: 'text/csv;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = 'audiogram_sample.csv';
+    a.click();
+    URL.revokeObjectURL(url);
+    showToast('📄 示例 CSV 已下载');
+  }
+
+  // ── CSV / JSON 解析 ──
+  function parseAudiogramText(text) {
+    text = text.trim();
+    let left = null, right = null;
+
+    // Try JSON
+    if (text.startsWith('{') || text.startsWith('[')) {
+      try {
+        const data = JSON.parse(text);
+        if (data.left || data.L || data.Left || data.left_ear) {
+          left = data.left || data.L || data.Left || data.left_ear;
+          right = data.right || data.R || data.Right || data.right_ear;
+        } else if (Array.isArray(data)) {
+          // [{freq:125, left:10, right:15}, ...]
+          left = data.map(r => r.left ?? r.L ?? r.Left ?? 0);
+          right = data.map(r => r.right ?? r.R ?? r.Right ?? 0);
+        }
+      } catch(e) { /* fall through to CSV */ }
+    }
+
+    if (!left || !right) {
+      // Try CSV / TSV
+      const lines = text.split(/\r?\n/).filter(l => l.trim() && !l.startsWith('#'));
+      const header = lines[0].toLowerCase();
+      const hasHeader = header.includes('hz') || header.includes('freq') || header.includes('左') || header.includes('left') || header.includes('频率');
+      const dataLines = hasHeader ? lines.slice(1) : lines;
+      const delimiter = text.includes('\t') ? '\t' : ',';
+      const rows = dataLines.map(l => l.split(delimiter).map(s => s.trim()));
+
+      // Detect column layout
+      // Format A: freq,left,right (3 cols)
+      // Format B: freq,right_air,right_bone,left_air,left_bone (5+ cols)
+      // Format C: left,right (2 cols, no freq)
+
+      const numCols = rows[0]?.length || 0;
+      left = []; right = [];
+
+      if (numCols >= 3) {
+        // Has frequency column + left + right
+        rows.forEach(r => {
+          if (r.length >= 3) {
+            left.push(parseFloat(r[1]) || 0);
+            right.push(parseFloat(r[2]) || 0);
+          }
+        });
+      } else if (numCols === 2) {
+        // Only left,right values
+        rows.forEach(r => {
+          left.push(parseFloat(r[0]) || 0);
+          right.push(parseFloat(r[1]) || 0);
+        });
+      }
+
+      // Normalize length to 11
+      if (left.length < 11) {
+        while (left.length < 11) left.push(left[left.length - 1] || 0);
+        while (right.length < 11) right.push(right[right.length - 1] || 0);
+      }
+      if (left.length > 11) { left = left.slice(0, 11); right = right.slice(0, 11); }
+    }
+
+    // Normalize to arrays of 11 numbers
+    if (!left || left.length < 11) return null;
+    left = left.slice(0, 11).map(v => Math.max(0, Math.min(120, Math.round(Number(v) || 0))));
+    right = right.slice(0, 11).map(v => Math.max(0, Math.min(120, Math.round(Number(v) || 0))));
+    return { left, right };
+  }
+
+  function applyImport(left, right, source) {
+    leftValues = left;
+    rightValues = right;
+    syncTable();
+    if (document.getElementById('view-slider').style.display !== 'none') buildSliders();
+    drawPlot();
+    showToast('✅ 听力图已导入 (' + source + ')');
+  }
+
+  // ── 文件导入 ──
+  function handleFileImport(event) {
+    const file = event.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = function(e) {
+      const result = parseAudiogramText(e.target.result);
+      if (result) {
+        applyImport(result.left, result.right, file.name);
+      } else {
+        showToast('❌ 无法解析文件: ' + file.name, 'error');
+      }
+    };
+    reader.readAsText(file, 'UTF-8');
+    event.target.value = ''; // Allow re-import of same file
+  }
+
+  // ── 拖放导入 ──
+  const dropOverlay = document.getElementById('dropOverlay');
+  let dragCounter = 0;
+
+  document.addEventListener('dragenter', function(e) {
+    e.preventDefault();
+    dragCounter++;
+    if (dragCounter === 1) dropOverlay.classList.add('active');
+  });
+
+  document.addEventListener('dragleave', function(e) {
+    e.preventDefault();
+    dragCounter--;
+    if (dragCounter === 0) dropOverlay.classList.remove('active');
+  });
+
+  document.addEventListener('dragover', function(e) {
+    e.preventDefault();
+  });
+
+  document.addEventListener('drop', function(e) {
+    e.preventDefault();
+    dragCounter = 0;
+    dropOverlay.classList.remove('active');
+
+    const file = e.dataTransfer.files[0];
+    if (!file) return;
+    // Only accept text-based files
+    const validTypes = ['text/csv', 'text/plain', 'application/json', 'text/json'];
+    const validExts = ['.csv', '.json', '.txt'];
+    const ext = '.' + file.name.split('.').pop().toLowerCase();
+
+    if (!validTypes.includes(file.type) && !validExts.includes(ext)) {
+      showToast('❌ 不支持的格式，请使用 CSV / JSON / TXT', 'error');
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = function(e) {
+      const result = parseAudiogramText(e.target.result);
+      if (result) {
+        applyImport(result.left, result.right, file.name);
+      } else {
+        showToast('❌ 无法解析文件内容: ' + file.name, 'error');
+      }
+    };
+    reader.readAsText(file, 'UTF-8');
+  });
+
+  // ── 粘贴导入 (Ctrl+V) ──
+  document.addEventListener('paste', function(e) {
+    // Only handle paste on the audiogram card or when not focused on inputs
+    const activeEl = document.activeElement;
+    if (activeEl && (activeEl.tagName === 'INPUT' || activeEl.tagName === 'TEXTAREA')) return;
+
+    const items = e.clipboardData?.items;
+    if (!items) return;
+
+    // Try text/html first (tab-separated from Excel), then text/plain
+    let text = null;
+    for (const item of items) {
+      if (item.kind === 'string' && (item.type === 'text/plain' || item.type === 'text/csv')) {
+        text = e.clipboardData.getData(item.type);
+        break;
+      }
+    }
+    if (!text) return;
+
+    const result = parseAudiogramText(text);
+    if (result) {
+      applyImport(result.left, result.right, '剪贴板');
+    }
+  });
+
+  // ════════════════════════════════════════
+  //  照片识别功能
+  // ════════════════════════════════════════
+
+  let photoData = { left: [], right: [], currentEar: 'right', imgNaturalW: 0, imgNaturalH: 0 };
+
+  function openPhotoModal() {
+    document.getElementById('photoModal').style.display = '';
+    resetPhotoUI();
+  }
+
+  function closePhotoModal() {
+    document.getElementById('photoModal').style.display = 'none';
+  }
+
+  function resetPhotoUI() {
+    document.getElementById('photoDropzone').style.display = '';
+    document.getElementById('photoWorkspace').style.display = 'none';
+    document.getElementById('photoImage').style.display = 'none';
+    photoData = { left: [], right: [], currentEar: 'right', imgNaturalW: 0, imgNaturalH: 0 };
+    updatePointList();
+    document.getElementById('currentEarLabel').innerHTML = '🔴 右耳';
+    document.getElementById('btnEarRight').classList.add('active');
+    document.getElementById('btnEarLeft').classList.remove('active');
+  }
+
+  function handlePhotoSelect(event) {
+    const file = event.target.files[0];
+    if (!file) return;
+    loadPhotoFile(file);
+    event.target.value = '';
+  }
+
+  function handlePhotoDrop(event) {
+    event.preventDefault();
+    event.target.classList.remove('drag');
+    const file = event.dataTransfer.files[0];
+    if (!file || !file.type.startsWith('image/')) return;
+    loadPhotoFile(file);
+  }
+
+  function loadPhotoFile(file) {
+    const reader = new FileReader();
+    reader.onload = function(e) {
+      const img = document.getElementById('photoImage');
+      img.onload = function() {
+        photoData.imgNaturalW = img.naturalWidth;
+        photoData.imgNaturalH = img.naturalHeight;
+        setupPhotoCanvas();
+        document.getElementById('photoDropzone').style.display = 'none';
+        document.getElementById('photoWorkspace').style.display = '';
+        img.style.display = '';
+      };
+      img.src = e.target.result;
+    };
+    reader.readAsDataURL(file);
+  }
+
+  function setupPhotoCanvas() {
+    const area = document.getElementById('photoCanvasArea');
+    const img = document.getElementById('photoImage');
+    const canvas = document.getElementById('photoCanvas');
+
+    // Wait for image to layout
+    requestAnimationFrame(() => {
+      const rect = area.getBoundingClientRect();
+      canvas.width = rect.width;
+      canvas.height = rect.height;
+      drawPhotoOverlay();
+    });
+  }
+
+  function getCanvasPos(e) {
+    const canvas = document.getElementById('photoCanvas');
+    const rect = canvas.getBoundingClientRect();
+    const img = document.getElementById('photoImage');
+    const imgRect = img.getBoundingClientRect();
+
+    // Position relative to canvas
+    const cx = e.clientX - rect.left;
+    const cy = e.clientY - rect.top;
+
+    // Map to image natural coordinates
+    const scaleX = photoData.imgNaturalW / imgRect.width;
+    const scaleY = photoData.imgNaturalH / imgRect.height;
+    const imgOffsetX = (imgRect.left - rect.left) * scaleX;
+    const imgOffsetY = (imgRect.top - rect.top) * scaleY;
+
+    const ix = cx * scaleX - imgOffsetX;
+    const iy = cy * scaleY - imgOffsetY;
+
+    return { cx, cy, ix, iy, scaleX, scaleY };
+  }
+
+  document.getElementById('photoCanvas').addEventListener('click', function(e) {
+    const img = document.getElementById('photoImage');
+    if (!img || img.style.display === 'none') return;
+
+    const pos = getCanvasPos(e);
+
+    // Check if click is on the image
+    const imgRect = img.getBoundingClientRect();
+    const canvasRect = this.getBoundingClientRect();
+    const relX = e.clientX - canvasRect.left;
+    const relY = e.clientY - canvasRect.top;
+
+    if (relX < imgRect.left - canvasRect.left || relX > imgRect.right - canvasRect.left ||
+        relY < imgRect.top - canvasRect.top || relY > imgRect.bottom - canvasRect.top) {
+      return; // Clicked outside image
+    }
+
+    const ear = photoData.currentEar;
+    photoData[ear].push({ ix: pos.ix, iy: pos.iy, cx: pos.cx, cy: pos.cy });
+    updatePointList();
+    drawPhotoOverlay();
+  });
+
+  function switchEar(ear) {
+    photoData.currentEar = ear;
+    document.getElementById('btnEarRight').classList.toggle('active', ear === 'right');
+    document.getElementById('btnEarLeft').classList.toggle('active', ear === 'left');
+    document.getElementById('currentEarLabel').innerHTML = ear === 'right' ? '🔴 右耳' : '🔵 左耳';
+    updatePointList();
+    drawPhotoOverlay();
+  }
+
+  function clearCurrentPoints() {
+    photoData[photoData.currentEar] = [];
+    updatePointList();
+    drawPhotoOverlay();
+  }
+
+  function clearAllPoints() {
+    photoData.left = [];
+    photoData.right = [];
+    updatePointList();
+    drawPhotoOverlay();
+  }
+
+  function updatePointList() {
+    const container = document.getElementById('pointList');
+
+    const renderPoints = (ear, label, color) => {
+      const pts = photoData[ear];
+      if (pts.length === 0) return '';
+      return `<div style="font-size:11px;font-weight:500;color:${color};margin-top:4px;">${label} (${pts.length}点)</div>` +
+        pts.map((p, i) => `
+          <div class="point-item ${photoData.currentEar === ear ? 'current' : ''}">
+            <span class="point-dot" style="background:${color};"></span>
+            <span class="point-info">#${i+1} (${Math.round(p.ix)}, ${Math.round(p.iy)})</span>
+            <span class="point-delete" onclick="deletePoint('${ear}',${i})">✕</span>
+          </div>
+        `).join('');
+    };
+
+    container.innerHTML = renderPoints('right', '右耳', '#f85149') + renderPoints('left', '左耳', '#58a6ff')
+      || '<div style="color:var(--text-secondary);font-size:11px;text-align:center;padding:20px;">在左侧图片上点击<br>来标记听阈点</div>';
+  }
+
+  function deletePoint(ear, idx) {
+    photoData[ear].splice(idx, 1);
+    updatePointList();
+    drawPhotoOverlay();
+  }
+
+  function drawPhotoOverlay() {
+    const canvas = document.getElementById('photoCanvas');
+    const ctx = canvas.getContext('2d');
+    const img = document.getElementById('photoImage');
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    if (!img || img.style.display === 'none') return;
+
+    const imgRect = img.getBoundingClientRect();
+    const canvasRect = canvas.getBoundingClientRect();
+    const offsetX = imgRect.left - canvasRect.left;
+    const offsetY = imgRect.top - canvasRect.top;
+    const scaleX = imgRect.width / photoData.imgNaturalW;
+    const scaleY = imgRect.height / photoData.imgNaturalH;
+
+    // Draw grid overlay (10x10 frequency/dB grid)
+    ctx.strokeStyle = 'rgba(255,255,255,0.08)'; ctx.lineWidth = 1;
+    for (let i = 0; i <= 10; i++) {
+      const x = offsetX + (imgRect.width * i) / 10;
+      ctx.beginPath(); ctx.moveTo(x, offsetY); ctx.lineTo(x, offsetY + imgRect.height); ctx.stroke();
+    }
+    for (let i = 0; i <= 10; i++) {
+      const y = offsetY + (imgRect.height * i) / 10;
+      ctx.beginPath(); ctx.moveTo(offsetX, y); ctx.lineTo(offsetX + imgRect.width, y); ctx.stroke();
+    }
+
+    // Draw axis labels hint
+    ctx.fillStyle = 'rgba(255,255,255,0.15)'; ctx.font = '9px system-ui';
+    const freqs = ['125','250','500','1k','2k','4k','8k'];
+    freqs.forEach((f, i) => {
+      const fx = offsetX + imgRect.width * 0.05 + (imgRect.width * 0.9 * i) / (freqs.length - 1);
+      ctx.fillText(f + 'Hz', fx, offsetY + imgRect.height - 4);
+    });
+    const dbs = ['0','20','40','60','80','100','120'];
+    dbs.forEach((d, i) => {
+      const fy = offsetY + imgRect.height * 0.05 + (imgRect.height * 0.9 * i) / (dbs.length - 1);
+      ctx.fillText(d, offsetX + 4, fy + 4);
+    });
+
+    // Draw points
+    const drawEarPoints = (pts, color, symbol) => {
+      pts.forEach((p, i) => {
+        const sx = offsetX + (p.ix / photoData.imgNaturalW) * imgRect.width;
+        const sy = offsetY + (p.iy / photoData.imgNaturalH) * imgRect.height;
+
+        // Outer ring
+        ctx.beginPath(); ctx.arc(sx, sy, 8, 0, Math.PI * 2);
+        ctx.fillStyle = 'rgba(0,0,0,0.6)'; ctx.fill();
+        ctx.strokeStyle = color; ctx.lineWidth = 2; ctx.stroke();
+
+        // Inner dot
+        ctx.beginPath(); ctx.arc(sx, sy, 3.5, 0, Math.PI * 2);
+        ctx.fillStyle = color; ctx.fill();
+
+        // Label
+        ctx.fillStyle = '#fff'; ctx.font = 'bold 10px system-ui'; ctx.textAlign = 'center';
+        ctx.fillText(i + 1, sx, sy - 12);
+
+        // Connecting lines
+        if (i > 0) {
+          const prev = pts[i - 1];
+          const px = offsetX + (prev.ix / photoData.imgNaturalW) * imgRect.width;
+          const py = offsetY + (prev.iy / photoData.imgNaturalH) * imgRect.height;
+          ctx.beginPath(); ctx.moveTo(px, py); ctx.lineTo(sx, sy);
+          ctx.strokeStyle = color; ctx.lineWidth = 1.5; ctx.setLineDash([4, 4]); ctx.stroke();
+          ctx.setLineDash([]);
+        }
+      });
+    };
+
+    drawEarPoints(photoData.right, '#f85149', '○');
+    drawEarPoints(photoData.left, '#58a6ff', '×');
+  }
+
+  function applyPhotoData() {
+    const ptsRight = photoData.right;
+    const ptsLeft = photoData.left;
+
+    if (ptsRight.length < 2 && ptsLeft.length < 2) {
+      showToast('⚠️ 请至少为一只耳朵标记 2 个以上的点', 'error');
+      return;
+    }
+
+    // Map image coordinates → 频率 & 听阈
+    // Assumes standard audiogram layout:
+    // X axis: 125Hz (left) → 8kHz (right)  [log scale approx]
+    // Y axis: -10dB HL (top) → 120dB HL (bottom)  [inverted!]
+    const FREQ_MAP = [125, 250, 500, 750, 1000, 1500, 2000, 3000, 4000, 6000, 8000];
+
+    function imageToAudiogram(pts) {
+      if (pts.length < 2) return null;
+
+      // Get image-space bounds
+      const minX = Math.min(...pts.map(p => p.ix));
+      const maxX = Math.max(...pts.map(p => p.ix));
+      const minY = Math.min(...pts.map(p => p.iy));
+      const maxY = Math.max(...pts.map(p => p.iy));
+
+      // Map each point to frequency using log scale
+      const values = {};
+      pts.forEach(p => {
+        // Log mapping for frequency (approximation)
+        const logMin = Math.log10(125);
+        const logMax = Math.log10(8000);
+        const t = (p.ix - minX) / (maxX - minX || 1);
+        const logFreq = logMin + t * (logMax - logMin);
+        const freq = Math.pow(10, logFreq);
+
+        // Linear mapping for dB HL (Y is inverted: top = low dB = good hearing)
+        const dbT = (p.iy - minY) / (maxY - minY || 1);
+        const dbHL = Math.round(dbT * 120);
+
+        // Snap to nearest standard frequency
+        let bestFreq = FREQ_MAP[0];
+        let bestDist = Math.abs(freq - FREQ_MAP[0]);
+        FREQ_MAP.forEach(f => {
+          const d = Math.abs(freq - f);
+          if (d < bestDist) { bestDist = d; bestFreq = f; }
+        });
+
+        // Average if multiple points map to same freq
+        if (values[bestFreq] === undefined) {
+          values[bestFreq] = Math.max(0, Math.min(120, dbHL));
+        } else {
+          values[bestFreq] = Math.max(0, Math.min(120, Math.round((values[bestFreq] + dbHL) / 2)));
+        }
+      });
+
+      // Fill all 11 frequencies
+      return FREQ_MAP.map(f => {
+        if (values[f] !== undefined) return values[f];
+        // Interpolate from nearest
+        const known = Object.entries(values).map(([k, v]) => [parseInt(k), v]).sort((a, b) => a[0] - b[0]);
+        if (known.length === 0) return 0;
+        if (f <= known[0][0]) return known[0][1];
+        if (f >= known[known.length - 1][0]) return known[known.length - 1][1];
+        for (let i = 0; i < known.length - 1; i++) {
+          if (f >= known[i][0] && f <= known[i + 1][0]) {
+            const t2 = (f - known[i][0]) / (known[i + 1][0] - known[i][0]);
+            return Math.round(known[i][1] + t2 * (known[i + 1][1] - known[i][1]));
+          }
+        }
+        return 0;
+      });
+    }
+
+    const leftResult = imageToAudiogram(ptsLeft);
+    const rightResult = imageToAudiogram(ptsRight);
+
+    if (!leftResult && !rightResult) {
+      showToast('❌ 无法从标记点推算出听力图数据', 'error');
+      return;
+    }
+
+    if (leftResult) leftValues = leftResult;
+    if (rightResult) rightValues = rightResult;
+
+    syncTable();
+    if (document.getElementById('view-slider').style.display !== 'none') buildSliders();
+    drawPlot();
+
+    const src = leftResult && rightResult ? '左右耳' : (leftResult ? '左耳' : '右耳');
+    showToast('✅ 听力图照片识别完成 (' + src + ', ' + (leftResult||rightResult).length + '个频点)');
+    closePhotoModal();
+  }
+
+  // Handle window resize for photo modal
+  window.addEventListener('resize', () => {
+    if (document.getElementById('photoModal').style.display !== 'none') {
+      setupPhotoCanvas();
+    }
+  });
+
+  // Init
+  drawPlot();
+</script>
+</body>
+</html>

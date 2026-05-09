@@ -1,0 +1,25 @@
+# PC 音频补偿 — Python 依赖
+# ==============================
+
+# 音频 I/O (WASAPI Loopback + Output)
+sounddevice>=0.4.6
+
+# 数值计算 + FFT
+numpy>=1.24.0
+scipy>=1.11.0
+
+# JIT 加速 DSP 热点
+numba>=0.58.0
+
+# 系统音量控制 (Windows COM)
+pycaw>=20230407
+comtypes>=1.2.0
+
+# GUI
+PyQt6>=6.6.0
+
+# 增益曲线可视化
+matplotlib>=3.7.0
+
+# 测试
+pytest>=7.4.0
