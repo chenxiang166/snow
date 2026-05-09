@@ -228,7 +228,8 @@ class AudioStream:
                     self._dsp_right.update_gains(rg, rc)
 
             # 打开音频流 (blocksize = hop_size, DSP 内部做 OLA)
-            self._stream = sd.Stream(
+            # 先请求低延迟缓冲；若设备/驱动不支持，则回退默认缓冲保证可用。
+            stream_args = dict(
                 samplerate=actual_sr,
                 blocksize=self.hop_size,
                 device=(self._input_id, self._output_id),
@@ -236,7 +237,18 @@ class AudioStream:
                 dtype='float32',
                 callback=self._audio_callback,
             )
-            self._stream.start()
+            try:
+                self._stream = sd.Stream(**stream_args, latency=C.STREAM_LATENCY)
+                self._stream.start()
+            except Exception as e:
+                logger.warning(f"低延迟音频流打开失败，回退默认缓冲: {e}")
+                if self._stream:
+                    try:
+                        self._stream.close()
+                    except Exception:
+                        pass
+                self._stream = sd.Stream(**stream_args)
+                self._stream.start()
             self._active = True
             if self._input_mode == 'vb_cable':
                 self._start_volume_sync()

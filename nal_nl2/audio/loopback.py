@@ -3,6 +3,23 @@
 import sounddevice as sd
 
 
+def _hostapi_score(hostapi_id: int) -> int:
+    """低延迟优先级: WASAPI > WDM-KS > DirectSound > MME。"""
+    try:
+        name = sd.query_hostapis(hostapi_id)['name'].lower()
+    except Exception:
+        return 0
+    if 'wasapi' in name:
+        return 40
+    if 'wdm' in name or 'ks' in name:
+        return 30
+    if 'directsound' in name:
+        return 20
+    if 'mme' in name:
+        return 5
+    return 10
+
+
 def list_devices():
     """列出所有音频设备"""
     print(f"\n{'='*80}")
@@ -76,11 +93,15 @@ def find_vb_cable_device() -> int | None:
       - CABLE Output  (录制设备): 我们的程序从此处捕获
     """
     devices = sd.query_devices()
+    candidates = []
     for i, d in enumerate(devices):
         name = d['name'].lower()
         if d['max_input_channels'] >= 2:
             if 'cable' in name or 'vb-audio' in name:
-                return i
+                candidates.append((_hostapi_score(d['hostapi']), i))
+    if candidates:
+        candidates.sort(reverse=True)
+        return candidates[0][1]
     return None
 
 
@@ -112,23 +133,10 @@ def find_output_device_for_input(input_dev_id: int, input_mode: str) -> int | No
     """
     根据输入设备找到合适的输出设备。
 
-    VB-Cable 模式: 使用系统默认输出设备
-    其他模式: 找同 hostapi 的物理输出设备
+    优先找同 hostapi 的物理输出设备。VB-Cable 会优先选择 WASAPI 端点，
+    避免落到 MME 带来明显延迟。
     """
     devices = sd.query_devices()
-
-    if input_mode == 'vb_cable':
-        # VB-Cable 在 MME API → 找 MME 物理输出
-        input_device = devices[input_dev_id]
-        vb_hostapi = input_device['hostapi']
-        for i, d in enumerate(devices):
-            if d['max_output_channels'] >= 2 and d['hostapi'] == vb_hostapi:
-                name = d['name'].lower()
-                if 'cable' in name or 'vb-audio' in name:
-                    continue
-                return i
-        return None
-
     input_device = devices[input_dev_id]
     hostapi = input_device['hostapi']
 
@@ -136,6 +144,8 @@ def find_output_device_for_input(input_dev_id: int, input_mode: str) -> int | No
         """判断是否为物理设备"""
         name = d['name'].lower()
         # 排除虚拟设备
+        if 'cable' in name or 'vb-audio' in name:
+            return False
         if 'sonar' in name or 'vad' in name or 'vb-' in name or 'voicemeeter' in name:
             return False
         if 'loopback' in name or 'digital' in name or 'spdif' in name:
@@ -160,6 +170,7 @@ def find_output_device_for_input(input_dev_id: int, input_mode: str) -> int | No
         # 奖励 Primary
         if 'primary' in name:
             score += 5
+        score += _hostapi_score(d['hostapi'])
         return score
 
     # 先找同 hostapi 的物理设备
@@ -170,9 +181,7 @@ def find_output_device_for_input(input_dev_id: int, input_mode: str) -> int | No
         if d['max_output_channels'] < 2:
             continue
         name = d['name'].lower()
-        if 'loopback' in name or 'digital' in name or 'spdif' in name:
-            continue
-        if 'sonar' in name or 'vad' in name or 'voicemeeter' in name:
+        if not _is_physical(d):
             continue
         if '2nd' in name or 'secondary' in name:
             continue  # 跳过次要输出
@@ -187,10 +196,7 @@ def find_output_device_for_input(input_dev_id: int, input_mode: str) -> int | No
     for i, d in enumerate(devices):
         if d['max_output_channels'] < 2:
             continue
-        name = d['name'].lower()
-        if 'loopback' in name or 'digital' in name or 'spdif' in name:
-            continue
-        if 'sonar' in name or 'vad' in name or 'voicemeeter' in name:
+        if not _is_physical(d):
             continue
         all_candidates.append((_score(d), i))
 
