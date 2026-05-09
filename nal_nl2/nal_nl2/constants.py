@@ -16,8 +16,22 @@ B_COEFFS = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
 # CR(f) = max(1.0, HTL(f) / CR_K + 1.0)
 CR_K = 40.0
 
-# WDRC 压缩拐点 (dB) — 设为较高值以保证日常音频获得全增益
+# WDRC 压缩拐点 (估算 dB SPL) — 设为较高值以保证日常音频获得全增益
 KNEE_DB = 80.0
+
+# 数字音频到声压级的粗略标定。PC 输出无法获知真实耳道 SPL，因此仅用于
+# WDRC 的相对电平估计；用户可按设备响度进一步校准该值。
+FULL_SCALE_DB_SPL = 100.0
+LEVEL_POWER_FLOOR = 1e-12
+
+# WDRC 增益平滑，避免逐帧增益跳变造成齿音、毛刺或抽吸感。
+WDRC_ATTACK_MS = 5.0
+WDRC_RELEASE_MS = 80.0
+
+# 处方增益只覆盖可测听范围；超低频不补偿，高频逐步回到 0dB 以降低 hiss。
+LOW_FREQ_GAIN_START_HZ = 80.0
+HIGH_FREQ_GAIN_LIMIT_HZ = 10000.0
+HIGH_FREQ_ROLLOFF_END_HZ = 12000.0
 
 # 默认最大输出限制 (dB SPL)
 DEFAULT_MPO = 110.0

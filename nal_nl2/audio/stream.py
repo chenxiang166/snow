@@ -119,6 +119,7 @@ class AudioStream:
 
         # 音量同步 (VB-Cable 模式下同步系统音量到物理输出)
         self._vol_sync_timer: threading.Timer | None = None
+        self._vol_sync_interval = 0.1
 
         # 统计
         self._frame_count = 0
@@ -237,6 +238,10 @@ class AudioStream:
             )
             self._stream.start()
             self._active = True
+            if self._input_mode == 'vb_cable':
+                self._start_volume_sync()
+            else:
+                self.master_volume = 1.0
             logger.info("音频流已启动")
             return True
 
@@ -251,6 +256,7 @@ class AudioStream:
             return
 
         self._active = False
+        self._stop_volume_sync()
 
         # 停止流
         if self._stream:
@@ -307,25 +313,46 @@ class AudioStream:
 
             # 真直通: 若所有增益 < 0.5dB, 原样输出
             if self._dsp_left._gains.max() < 0.5 and self._dsp_right._gains.max() < 0.5:
-                outdata[:] = indata
+                outdata.fill(0)
+                if indata.shape[1] == 1 and outdata.shape[1] >= 2:
+                    outdata[:] = indata[:, :1]
+                else:
+                    ch = min(indata.shape[1], outdata.shape[1])
+                    outdata[:, :ch] = indata[:, :ch]
+                outdata[:] *= self.master_volume
                 return
 
             # 诊断: 均匀增益测试 → 验证 OLA 管线是否透明
             if self.uniform_test:
                 avg_gain = (self._dsp_left._gains.mean() + self._dsp_right._gains.mean()) / 2
                 if avg_gain > 0.5:
-                    outdata[:] = np.clip(indata * (10.0 ** (avg_gain / 20.0)), -1, 1)
+                    processed = np.clip(indata * (10.0 ** (avg_gain / 20.0)), -1, 1)
                 else:
-                    outdata[:] = indata
+                    processed = indata
+                outdata.fill(0)
+                if processed.shape[1] == 1 and outdata.shape[1] >= 2:
+                    outdata[:] = processed[:, :1]
+                else:
+                    ch = min(processed.shape[1], outdata.shape[1])
+                    outdata[:, :ch] = processed[:, :ch]
+                outdata[:] *= self.master_volume
                 return
 
             # DSP 处理
-            for ch in range(min(indata.shape[1], outdata.shape[1])):
-                dsp = self._dsp_left if ch == 0 else self._dsp_right
-                ch_in = indata[:, ch]
-                ch_out = dsp.process_mono(ch_in)
+            outdata.fill(0)
+            in_ch = indata.shape[1]
+            out_ch = outdata.shape[1]
+            if in_ch == 1 and out_ch >= 2:
+                ch_out = self._dsp_left.process_mono(indata[:, 0])
                 outlen = min(len(ch_out), outdata.shape[0])
-                outdata[:outlen, ch] = ch_out[:outlen]
+                outdata[:outlen, :] = ch_out[:outlen, None]
+            else:
+                for ch in range(min(in_ch, out_ch)):
+                    dsp = self._dsp_left if ch == 0 else self._dsp_right
+                    ch_in = indata[:, ch]
+                    ch_out = dsp.process_mono(ch_in)
+                    outlen = min(len(ch_out), outdata.shape[0])
+                    outdata[:outlen, ch] = ch_out[:outlen]
 
             # 主音量
             outdata[:] *= self.master_volume
@@ -334,7 +361,44 @@ class AudioStream:
             logger.error(f"DSP 回调异常: {e}")
             outdata.fill(0)
 
+    def _start_volume_sync(self):
+        """VB-Cable 模式下把 Windows 默认设备音量映射为 DSP 输出音量。"""
+        self._stop_volume_sync()
+        self._sync_master_volume_from_system()
+        self._schedule_volume_sync()
+
+    def _stop_volume_sync(self):
+        timer = self._vol_sync_timer
+        self._vol_sync_timer = None
+        if timer is not None:
+            try:
+                timer.cancel()
+            except Exception:
+                pass
+
+    def _schedule_volume_sync(self):
+        if not self._active:
+            return
+        timer = threading.Timer(self._vol_sync_interval, self._volume_sync_tick)
+        timer.daemon = True
+        self._vol_sync_timer = timer
+        timer.start()
+
+    def _volume_sync_tick(self):
+        try:
+            self._sync_master_volume_from_system()
+        finally:
+            self._schedule_volume_sync()
+
+    def _sync_master_volume_from_system(self):
+        try:
+            muted, volume = vc.get_default_device_state()
+            self.master_volume = 0.0 if muted else max(0.0, min(1.0, float(volume)))
+        except Exception as e:
+            logger.debug(f"系统音量同步失败: {e}")
+
     def _cleanup(self):
+        self._stop_volume_sync()
         _write_state(False)
 
     def __enter__(self):

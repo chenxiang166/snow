@@ -9,6 +9,7 @@
 如果 pycaw 不可用, 所有操作降级为 no-op。
 """
 
+from contextlib import contextmanager
 import logging
 import sys
 
@@ -25,40 +26,45 @@ if sys.platform == 'win32':
         logger.warning("pycaw 不可用，音量控制功能将跳过")
 
 
-def _get_default_endpoint():
-    """获取系统默认扬声器端点"""
-    if not _HAS_PYCAW:
-        return None
+def _activate_endpoint(device):
+    """兼容不同 pycaw 版本，从设备对象激活 IAudioEndpointVolume。"""
+    if hasattr(device, 'Activate'):
+        interface = device.Activate(IAudioEndpointVolume._iid_, CLSCTX_ALL, None)
+    elif hasattr(device, '_dev'):
+        interface = device._dev.Activate(IAudioEndpointVolume._iid_, CLSCTX_ALL, None)
+    else:
+        raise TypeError(f"无法识别的 pycaw 设备对象类型: {type(device)!r}")
+    return interface.QueryInterface(IAudioEndpointVolume)
 
+
+@contextmanager
+def _endpoint_context(device=None):
+    """在 COM 初始化生命周期内提供 endpoint volume 接口。"""
+    if not _HAS_PYCAW:
+        yield None
+        return
+
+    initialized = False
+    endpoint = None
     try:
         CoInitialize()
-        # pycaw 新版 API: AudioUtilities.GetSpeakers() 返回 AudioDevice
-        # 老版返回 MMDevice
-        devices = AudioUtilities.GetSpeakers()
-
-        # 兼容不同 pycaw 版本
-        if hasattr(devices, 'Activate'):
-            # 老版 MMDevice 接口
-            interface = devices.Activate(
-                IAudioEndpointVolume._iid_, CLSCTX_ALL, None
-            )
-        elif hasattr(devices, '_dev'):
-            # 新版 AudioDevice: 通过内部 MMDevice
-            interface = devices._dev.Activate(
-                IAudioEndpointVolume._iid_, CLSCTX_ALL, None
-            )
-        else:
-            # 尝试直接获取 endpoint volume
-            logger.warning("无法识别的 pycaw 设备对象类型")
-            return None
-
-        return interface.QueryInterface(IAudioEndpointVolume)
+        initialized = True
+        if device is None:
+            device = AudioUtilities.GetSpeakers()
+        endpoint = _activate_endpoint(device)
     except Exception as e:
         logger.error(f"获取音频端点失败: {e}")
-        return None
-    finally:
-        CoUninitialize()
 
+    try:
+        # The endpoint must be used before CoUninitialize; callers access it
+        # inside the context manager body.
+        yield endpoint
+    finally:
+        if initialized:
+            try:
+                CoUninitialize()
+            except Exception:
+                pass
 
 def get_default_device_state() -> tuple[bool, float]:
     """
@@ -70,16 +76,16 @@ def get_default_device_state() -> tuple[bool, float]:
     if not _HAS_PYCAW:
         return False, 1.0
 
-    try:
-        endpoint = _get_default_endpoint()
+    with _endpoint_context() as endpoint:
         if endpoint is None:
             return False, 1.0
-        mute = endpoint.GetMute()
-        volume = endpoint.GetMasterVolumeLevelScalar()
-        return mute, volume
-    except Exception as e:
-        logger.error(f"获取设备状态失败: {e}")
-        return False, 1.0
+        try:
+            mute = bool(endpoint.GetMute())
+            volume = float(endpoint.GetMasterVolumeLevelScalar())
+            return mute, max(0.0, min(1.0, volume))
+        except Exception as e:
+            logger.error(f"获取设备状态失败: {e}")
+            return False, 1.0
 
 
 def mute_default_device(mute: bool = True):
@@ -93,14 +99,14 @@ def mute_default_device(mute: bool = True):
         logger.warning("pycaw 不可用，跳过静音操作")
         return
 
-    try:
-        endpoint = _get_default_endpoint()
+    with _endpoint_context() as endpoint:
         if endpoint is None:
             return
-        endpoint.SetMute(mute, None)
-        logger.info(f"设备静音: {'是' if mute else '否'}")
-    except Exception as e:
-        logger.error(f"静音操作失败: {e}")
+        try:
+            endpoint.SetMute(bool(mute), None)
+            logger.info(f"设备静音: {'是' if mute else '否'}")
+        except Exception as e:
+            logger.error(f"静音操作失败: {e}")
 
 
 def set_default_device_volume(volume: float):
@@ -113,15 +119,15 @@ def set_default_device_volume(volume: float):
     if not _HAS_PYCAW:
         return
 
-    try:
-        endpoint = _get_default_endpoint()
+    with _endpoint_context() as endpoint:
         if endpoint is None:
             return
-        volume = max(0.0, min(1.0, volume))
-        endpoint.SetMasterVolumeLevelScalar(volume, None)
-        logger.info(f"音量设置为: {volume:.0%}")
-    except Exception as e:
-        logger.error(f"音量设置失败: {e}")
+        try:
+            volume = max(0.0, min(1.0, float(volume)))
+            endpoint.SetMasterVolumeLevelScalar(volume, None)
+            logger.info(f"音量设置为: {volume:.0%}")
+        except Exception as e:
+            logger.error(f"音量设置失败: {e}")
 
 
 def restore_default_device(original_mute: bool, original_volume: float):
@@ -135,41 +141,47 @@ def restore_default_device(original_mute: bool, original_volume: float):
     if not _HAS_PYCAW:
         return
 
-    try:
-        endpoint = _get_default_endpoint()
+    with _endpoint_context() as endpoint:
         if endpoint is None:
             return
-        endpoint.SetMasterVolumeLevelScalar(original_volume, None)
-        endpoint.SetMute(original_mute, None)
-        logger.info(f"设备已恢复: mute={original_mute}, vol={original_volume:.0%}")
-    except Exception as e:
-        logger.error(f"恢复设备失败: {e}")
+        try:
+            volume = max(0.0, min(1.0, float(original_volume)))
+            endpoint.SetMasterVolumeLevelScalar(volume, None)
+            endpoint.SetMute(bool(original_mute), None)
+            logger.info(f"设备已恢复: mute={original_mute}, vol={volume:.0%}")
+        except Exception as e:
+            logger.error(f"恢复设备失败: {e}")
 
 
 def is_muted() -> bool:
     """检查默认设备是否静音"""
-    if not _HAS_PYCAW:
-        return False
-    try:
-        endpoint = _get_default_endpoint()
-        if endpoint is None:
-            return False
-        return endpoint.GetMute()
-    except Exception:
-        return False
+    return get_default_device_state()[0]
 
 
 def get_volume() -> float:
     """获取默认设备主音量"""
-    if not _HAS_PYCAW:
-        return 1.0
-    try:
-        endpoint = _get_default_endpoint()
-        if endpoint is None:
-            return 1.0
-        return endpoint.GetMasterVolumeLevelScalar()
-    except Exception:
-        return 1.0
+    return get_default_device_state()[1]
+
+
+def _iter_output_endpoints():
+    """迭代可激活的音频端点。调用方必须已初始化 COM。"""
+    for dev in AudioUtilities.GetAllDevices():
+        try:
+            name = getattr(dev, 'FriendlyName', None) or getattr(dev, 'DeviceFriendlyName', None)
+        except Exception:
+            continue
+        if name:
+            yield dev, str(name)
+
+
+def _matches_portaudio_device(portaudio_name: str, endpoint_name: str) -> bool:
+    """用宽松字符串匹配 PortAudio 设备和 Windows endpoint 名称。"""
+    pa = portaudio_name.lower()
+    ep = endpoint_name.lower()
+    if pa in ep or ep in pa:
+        return True
+    # PortAudio 名称常带接口/截断信息，使用前若干字符做兜底匹配。
+    return pa[:15] in ep or ep[:15] in pa
 
 
 def set_device_volume_by_id(portaudio_dev_id: int, volume: float):
@@ -179,27 +191,22 @@ def set_device_volume_by_id(portaudio_dev_id: int, volume: float):
     try:
         import sounddevice as sd
         devices = sd.query_devices()
-        target_name = devices[portaudio_dev_id]['name'].lower()
+        target_name = str(devices[portaudio_dev_id]['name'])
+        volume = max(0.0, min(1.0, float(volume)))
         CoInitialize()
         try:
-            all_devs = AudioUtilities.GetAllDevices()
-            for dev in all_devs:
-                try:
-                    fid = dev.FriendlyName if hasattr(dev, 'FriendlyName') else dev.DeviceFriendlyName
-                except:
-                    continue
-                if not fid or target_name[:15] not in fid.lower():
+            for dev, endpoint_name in _iter_output_endpoints():
+                if not _matches_portaudio_device(target_name, endpoint_name):
                     continue
                 try:
-                    interface = dev.Activate(IAudioEndpointVolume._iid_, CLSCTX_ALL, None)
-                    ep = interface.QueryInterface(IAudioEndpointVolume)
-                    ep.SetMasterVolumeLevelScalar(max(0.0, min(1.0, volume)), None)
-                except:
-                    pass
+                    ep = _activate_endpoint(dev)
+                    ep.SetMasterVolumeLevelScalar(volume, None)
+                except Exception as e:
+                    logger.debug(f"设置设备音量失败 ({endpoint_name}): {e}")
         finally:
             CoUninitialize()
-    except Exception:
-        pass
+    except Exception as e:
+        logger.debug(f"设置指定设备音量失败: {e}")
 
 
 def mute_all_physical_outputs():
@@ -212,24 +219,15 @@ def mute_all_physical_outputs():
     try:
         CoInitialize()
         try:
-            all_devs = AudioUtilities.GetAllDevices()
-            for dev in all_devs:
-                try:
-                    fid = dev.FriendlyName if hasattr(dev, 'FriendlyName') else dev.DeviceFriendlyName
-                except:
-                    continue
-                if not fid:
-                    continue
-                fid_low = fid.lower()
+            for dev, name in _iter_output_endpoints():
+                name_low = name.lower()
                 # 排除虚拟设备
-                if 'cable' in fid_low or 'vb-audio' in fid_low or 'sonar' in fid_low or 'vad' in fid_low:
+                if 'cable' in name_low or 'vb-audio' in name_low or 'sonar' in name_low or 'vad' in name_low:
                     continue
-                # 静音物理播放设备
                 try:
-                    interface = dev.Activate(IAudioEndpointVolume._iid_, CLSCTX_ALL, None)
-                    ep = interface.QueryInterface(IAudioEndpointVolume)
+                    ep = _activate_endpoint(dev)
                     ep.SetMute(True, None)
-                except:
+                except Exception:
                     pass
         finally:
             CoUninitialize()
@@ -244,20 +242,15 @@ def unmute_device_by_id(portaudio_dev_id: int):
     try:
         import sounddevice as sd
         devices = sd.query_devices()
-        target_name = devices[portaudio_dev_id]['name'].lower()
+        target_name = str(devices[portaudio_dev_id]['name'])
         CoInitialize()
         try:
-            for dev in AudioUtilities.GetAllDevices():
-                try:
-                    fid = dev.FriendlyName if hasattr(dev, 'FriendlyName') else dev.DeviceFriendlyName
-                except:
+            for dev, endpoint_name in _iter_output_endpoints():
+                if not _matches_portaudio_device(target_name, endpoint_name):
                     continue
-                if not fid or target_name[:15] not in fid.lower():
-                    continue
-                interface = dev.Activate(IAudioEndpointVolume._iid_, CLSCTX_ALL, None)
-                ep = interface.QueryInterface(IAudioEndpointVolume)
+                ep = _activate_endpoint(dev)
                 ep.SetMute(False, None)
-                ep.SetMasterVolumeLevelScalar(1.0, None)
+                # 不强制把物理设备音量拉到 100%，避免启动时突然过响。
         finally:
             CoUninitialize()
     except Exception:
@@ -271,22 +264,14 @@ def unmute_all_physical_outputs():
     try:
         CoInitialize()
         try:
-            all_devs = AudioUtilities.GetAllDevices()
-            for dev in all_devs:
-                try:
-                    fid = dev.FriendlyName if hasattr(dev, 'FriendlyName') else dev.DeviceFriendlyName
-                except:
-                    continue
-                if not fid:
-                    continue
-                fid_low = fid.lower()
-                if 'cable' in fid_low or 'vb-audio' in fid_low:
+            for dev, name in _iter_output_endpoints():
+                name_low = name.lower()
+                if 'cable' in name_low or 'vb-audio' in name_low:
                     continue
                 try:
-                    interface = dev.Activate(IAudioEndpointVolume._iid_, CLSCTX_ALL, None)
-                    ep = interface.QueryInterface(IAudioEndpointVolume)
+                    ep = _activate_endpoint(dev)
                     ep.SetMute(False, None)
-                except:
+                except Exception:
                     pass
         finally:
             CoUninitialize()

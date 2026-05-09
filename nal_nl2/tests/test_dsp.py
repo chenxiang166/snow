@@ -20,10 +20,8 @@ class TestDSPEngine:
         """创建 DSP 引擎实例"""
         engine = DSPEngine(sample_rate=48000, frame_size=960, fft_size=2048)
         engine.update_gains(
-            [10.0] * 11,  # 左耳增益 10dB
-            [10.0] * 11,  # 右耳增益 10dB
+            [10.0] * 11,  # 目标增益 10dB
             [1.5] * 11,   # 压缩比 1.5:1
-            [1.5] * 11,
         )
         return engine
 
@@ -36,7 +34,7 @@ class TestDSPEngine:
     def test_process_sine(self, dsp):
         """正弦波处理后不应损坏"""
         t = np.arange(dsp.frame_size) / C.SAMPLE_RATE
-        sine = np.sin(2 * np.pi * 1000 * t).astype(np.float32)
+        sine = (np.sin(2 * np.pi * 1000 * t) * 0.1).astype(np.float32)
 
         output = dsp.process_mono(sine)
         assert output.shape[0] == dsp.hop_size
@@ -45,15 +43,16 @@ class TestDSPEngine:
     def test_gain_applied(self, dsp):
         """增益应被应用"""
         t = np.arange(dsp.frame_size) / C.SAMPLE_RATE
-        sine = np.sin(2 * np.pi * 1000 * t).astype(np.float32)
+        sine = (np.sin(2 * np.pi * 1000 * t) * 0.05).astype(np.float32)
 
-        # 无增益
-        dsp.update_gains([0.0] * 11, [0.0] * 11)
-        output_no_gain = dsp.process_mono(sine.copy())
+        # 无增益 / 有增益分别用独立引擎，避免 OLA 历史状态影响对比。
+        dsp_no_gain = DSPEngine(sample_rate=48000, frame_size=960, fft_size=2048)
+        dsp_no_gain.update_gains([0.0] * 11, [1.0] * 11)
+        output_no_gain = dsp_no_gain.process_mono(sine.copy())
 
-        # 有增益
-        dsp.update_gains([20.0] * 11, [20.0] * 11)
-        output_with_gain = dsp.process_mono(sine.copy())
+        dsp_with_gain = DSPEngine(sample_rate=48000, frame_size=960, fft_size=2048)
+        dsp_with_gain.update_gains([20.0] * 11, [1.0] * 11)
+        output_with_gain = dsp_with_gain.process_mono(sine.copy())
 
         rms_no_gain = np.sqrt(np.mean(output_no_gain ** 2))
         rms_with_gain = np.sqrt(np.mean(output_with_gain ** 2))
@@ -71,7 +70,7 @@ class TestDSPEngine:
     def test_processing_latency(self, dsp):
         """处理延迟应远低于帧预算"""
         t = np.arange(dsp.frame_size) / C.SAMPLE_RATE
-        sine = np.sin(2 * np.pi * 1000 * t).astype(np.float32)
+        sine = (np.sin(2 * np.pi * 1000 * t) * 0.1).astype(np.float32)
 
         # 预热
         for _ in range(10):
@@ -96,7 +95,7 @@ class TestDSPEngine:
         """极大输入应被压缩/限制"""
         loud = np.ones(dsp.frame_size, dtype=np.float32) * 0.9
 
-        dsp.update_gains([30.0] * 11, [30.0] * 11, [3.0] * 11, [3.0] * 11)
+        dsp.update_gains([30.0] * 11, [3.0] * 11)
         output = dsp.process_mono(loud)
 
         # 输出不应超过 1.0 (满量程)
@@ -113,10 +112,14 @@ class TestDSPEngine:
         gains = [0.0] * 11
         gains[8] = 20.0  # 4000 Hz = +20dB
         gains[9] = 20.0  # 6000 Hz = +20dB
-        dsp.update_gains(gains, gains)
 
-        out_low = dsp.process_mono(low_freq)
-        out_high = dsp.process_mono(high_freq)
+        dsp_low = DSPEngine(sample_rate=48000, frame_size=960, fft_size=2048)
+        dsp_low.update_gains(gains, [1.0] * 11)
+        dsp_high = DSPEngine(sample_rate=48000, frame_size=960, fft_size=2048)
+        dsp_high.update_gains(gains, [1.0] * 11)
+
+        out_low = dsp_low.process_mono(low_freq)
+        out_high = dsp_high.process_mono(high_freq)
 
         rms_low = np.sqrt(np.mean(out_low ** 2))
         rms_high = np.sqrt(np.mean(out_high ** 2))
