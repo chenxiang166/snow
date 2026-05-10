@@ -100,6 +100,7 @@ class AudioStream:
         # 设备
         self._input_id: int | None = None
         self._output_id: int | None = None
+        self._auto_output_id: int | None = None
         self._input_mode: str = 'loopback'  # 'loopback' or 'stereo_mix'
 
         # 流
@@ -114,6 +115,7 @@ class AudioStream:
         self._original_mute = None
         self._original_volume = None
         self._current_gain_result = None
+        self.last_error: str | None = None
         self.uniform_test = False  # 均匀增益测试模式
         self.master_volume = 1.0
 
@@ -175,12 +177,20 @@ class AudioStream:
             logger.warning("音频流已在运行")
             return True
 
+        self.last_error = None
         try:
             # 自动查找输入设备, 保留用户已选的输出设备
             self._input_id, auto_output_id, self._input_mode = lb.get_device_pair()
+            self._auto_output_id = auto_output_id
             if self._output_id is None:
                 self._output_id = auto_output_id
-            # else: 保持用户在 GUI 中选择的输出设备
+            elif not self._is_compatible_output(self._input_id, self._output_id):
+                logger.warning(
+                    "用户选择的输出设备与输入端不兼容，改用自动检测输出。用户输出=%s；自动输出=%s",
+                    lb.device_summary(self._output_id),
+                    lb.device_summary(auto_output_id),
+                )
+                self._output_id = auto_output_id
             lb.print_device_info(self._input_id, self._output_id, self._input_mode)
 
             # VB-Cable: 完美方案 — 系统音频走虚拟设备, 输出到物理扬声器
@@ -191,6 +201,7 @@ class AudioStream:
             
             lb.print_device_info(self._input_id, self._output_id, self._input_mode)
         except RuntimeError as e:
+            self.last_error = str(e)
             logger.error(f"设备查找失败: {e}")
             return False
 
@@ -208,47 +219,26 @@ class AudioStream:
             input_device = sd.query_devices()[self._input_id]
             output_device = sd.query_devices()[self._output_id]
             in_channels = min(input_device['max_input_channels'], 2)
-            # 使用输出设备的采样率，避免重采样
-            actual_sr = int(output_device['default_samplerate'])
-            if actual_sr < 8000 or actual_sr > 192000:
-                actual_sr = self.sample_rate
-
-            # 同步 DSP 采样率
-            if actual_sr != self._dsp_left.sr:
-                self._dsp_left = DSPEngine(actual_sr, self.frame_size, C.FFT_SIZE)
-                self._dsp_right = DSPEngine(actual_sr, self.frame_size, C.FFT_SIZE)
-                # 重新应用增益
-                if self._current_gain_result:
-                    from nal_nl2.prescription import get_gain_array, get_cr_array
-                    lg = get_gain_array(self._current_gain_result, 'left')
-                    rg = get_gain_array(self._current_gain_result, 'right')
-                    lc = get_cr_array(self._current_gain_result, 'left')
-                    rc = get_cr_array(self._current_gain_result, 'right')
-                    self._dsp_left.update_gains(lg, lc)
-                    self._dsp_right.update_gains(rg, rc)
-
-            # 打开音频流 (blocksize = hop_size, DSP 内部做 OLA)
-            # 先请求低延迟缓冲；若设备/驱动不支持，则回退默认缓冲保证可用。
-            stream_args = dict(
-                samplerate=actual_sr,
-                blocksize=self.hop_size,
-                device=(self._input_id, self._output_id),
-                channels=(in_channels, self.channels),
-                dtype='float32',
-                callback=self._audio_callback,
-            )
             try:
-                self._stream = sd.Stream(**stream_args, latency=C.STREAM_LATENCY)
-                self._stream.start()
-            except Exception as e:
-                logger.warning(f"低延迟音频流打开失败，回退默认缓冲: {e}")
-                if self._stream:
-                    try:
-                        self._stream.close()
-                    except Exception:
-                        pass
-                self._stream = sd.Stream(**stream_args)
-                self._stream.start()
+                actual_sr = self._open_stream_with_fallbacks(
+                    input_device, output_device, in_channels
+                )
+            except Exception as first_error:
+                if self._output_id == self._auto_output_id:
+                    raise
+
+                failed_output_id = self._output_id
+                self._output_id = self._auto_output_id
+                output_device = sd.query_devices()[self._output_id]
+                logger.warning(
+                    "用户选择的输出设备无法打开，回退到自动检测输出。失败输出=%s；自动输出=%s；原因=%s",
+                    lb.device_summary(failed_output_id),
+                    lb.device_summary(self._output_id),
+                    first_error,
+                )
+                actual_sr = self._open_stream_with_fallbacks(
+                    input_device, output_device, in_channels
+                )
             self._active = True
             if self._input_mode == 'vb_cable':
                 self._start_volume_sync()
@@ -258,6 +248,10 @@ class AudioStream:
             return True
 
         except Exception as e:
+            self.last_error = str(e)
+            logger.info("启动失败时的输入设备: %s", lb.device_summary(self._input_id))
+            logger.info("启动失败时的输出设备: %s", lb.device_summary(self._output_id))
+            lb.log_device_inventory()
             logger.error(f"启动失败: {e}")
             self._cleanup()
             return False
@@ -302,6 +296,107 @@ class AudioStream:
             }
 
     # ── 内部实现 ──
+
+    def _is_compatible_output(self, input_id: int, output_id: int) -> bool:
+        """快速过滤明显不能和输入端组成全双工流的输出设备。"""
+        try:
+            devices = sd.query_devices()
+            input_device = devices[input_id]
+            output_device = devices[output_id]
+            if output_device['max_output_channels'] < 2:
+                return False
+            # PortAudio 的全双工流通常需要输入/输出处在同一个 host API。
+            return input_device['hostapi'] == output_device['hostapi']
+        except Exception:
+            return False
+
+    def _candidate_sample_rates(self, input_device, output_device) -> list[int]:
+        """返回按优先级去重后的采样率候选。"""
+        candidates = [
+            output_device.get('default_samplerate'),
+            input_device.get('default_samplerate'),
+            self.sample_rate,
+            C.SAMPLE_RATE,
+            48000,
+            44100,
+        ]
+        result = []
+        for value in candidates:
+            try:
+                rate = int(round(float(value)))
+            except (TypeError, ValueError):
+                continue
+            if 8000 <= rate <= 192000 and rate not in result:
+                result.append(rate)
+        return result or [self.sample_rate]
+
+    def _sync_dsp_sample_rate(self, sample_rate: int):
+        """音频设备采样率改变时同步 DSP 引擎。"""
+        if sample_rate == self._dsp_left.sr:
+            return
+
+        self._dsp_left = DSPEngine(sample_rate, self.frame_size, C.FFT_SIZE)
+        self._dsp_right = DSPEngine(sample_rate, self.frame_size, C.FFT_SIZE)
+        if not self._current_gain_result:
+            return
+
+        from nal_nl2.prescription import get_gain_array, get_cr_array
+        lg = get_gain_array(self._current_gain_result, 'left')
+        rg = get_gain_array(self._current_gain_result, 'right')
+        lc = get_cr_array(self._current_gain_result, 'left')
+        rc = get_cr_array(self._current_gain_result, 'right')
+        self._dsp_left.update_gains(lg, lc)
+        self._dsp_right.update_gains(rg, rc)
+
+    def _close_stream_quietly(self):
+        if self._stream:
+            try:
+                self._stream.close()
+            except Exception:
+                pass
+            self._stream = None
+
+    def _open_stream_with_fallbacks(self, input_device, output_device,
+                                    in_channels: int) -> int:
+        """
+        打开音频流。
+
+        不同 Windows 机器的虚拟声卡和物理声卡默认采样率可能不同，
+        先尝试低延迟，再用默认缓冲，并在常见采样率之间回退。
+        """
+        errors = []
+        for sample_rate in self._candidate_sample_rates(input_device, output_device):
+            self._sync_dsp_sample_rate(sample_rate)
+            stream_args = dict(
+                samplerate=sample_rate,
+                blocksize=self.hop_size,
+                device=(self._input_id, self._output_id),
+                channels=(in_channels, self.channels),
+                dtype='float32',
+                callback=self._audio_callback,
+            )
+            for latency in (C.STREAM_LATENCY, None):
+                mode = "低延迟" if latency is not None else "默认缓冲"
+                try:
+                    if latency is None:
+                        self._stream = sd.Stream(**stream_args)
+                    else:
+                        self._stream = sd.Stream(**stream_args, latency=latency)
+                    self._stream.start()
+                    logger.info(f"音频流打开成功: {sample_rate} Hz, {mode}")
+                    return sample_rate
+                except Exception as e:
+                    self._close_stream_quietly()
+                    errors.append(f"{sample_rate} Hz/{mode}: {e}")
+                    logger.warning(f"音频流打开失败 ({sample_rate} Hz, {mode}): {e}")
+
+        details = "\n".join(errors[-4:])
+        raise RuntimeError(
+            "音频设备已找到，但无法打开输入/输出流。\n"
+            "常见原因：设备被其他程序独占、采样率不兼容、蓝牙耳机处于通话模式，"
+            "或 Windows 麦克风权限禁止访问录音设备。\n"
+            f"最近尝试结果：\n{details}"
+        )
 
     def _audio_callback(self, indata: np.ndarray, outdata: np.ndarray,
                         frames: int, time_info, status):

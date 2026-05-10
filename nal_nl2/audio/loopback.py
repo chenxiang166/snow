@@ -1,6 +1,9 @@
 """WASAPI Loopback 捕获管理 — 查找和配置音频设备"""
 
+import logging
 import sounddevice as sd
+
+logger = logging.getLogger(__name__)
 
 
 def _hostapi_score(hostapi_id: int) -> int:
@@ -34,6 +37,45 @@ def list_devices():
         in_ch = d['max_input_channels']
         out_ch = d['max_output_channels']
         print(f"{i:<4} {name:<40} {in_ch:>6} {out_ch:>6} {hostapi:<20}")
+
+
+def device_summary(device_id: int | None) -> str:
+    """返回便于日志排查的设备摘要。"""
+    if device_id is None:
+        return "None"
+    try:
+        devices = sd.query_devices()
+        hostapis = sd.query_hostapis()
+        d = devices[device_id]
+        hostapi = hostapis[d['hostapi']]['name']
+        return (
+            f"[{device_id}] {d['name']} | "
+            f"in={d['max_input_channels']} out={d['max_output_channels']} | "
+            f"api={hostapi} | default_sr={d['default_samplerate']:.0f}"
+        )
+    except Exception as e:
+        return f"[{device_id}] <读取失败: {e}>"
+
+
+def log_device_inventory():
+    """把目标机器的音频设备表写入日志。"""
+    try:
+        devices = sd.query_devices()
+        hostapis = sd.query_hostapis()
+        logger.info("目标机器音频设备列表:")
+        for i, d in enumerate(devices):
+            hostapi = hostapis[d['hostapi']]['name']
+            logger.info(
+                "  [%s] %s | in=%s out=%s | api=%s | default_sr=%.0f",
+                i,
+                d['name'],
+                d['max_input_channels'],
+                d['max_output_channels'],
+                hostapi,
+                d['default_samplerate'],
+            )
+    except Exception as e:
+        logger.warning(f"记录音频设备列表失败: {e}")
 
 
 def find_loopback_device(hostapi_name: str = 'Windows WASAPI') -> int | None:
@@ -245,3 +287,6 @@ def print_device_info(input_id: int, output_id: int, mode: str = 'loopback'):
     print(f"  输出: [{output_id}] {out['name']}")
     print(f"    Channels: {out['max_output_channels']}, "
           f"Default SR: {out['default_samplerate']:.0f} Hz")
+    logger.info("音频设备配置: 模式=%s", mode_label)
+    logger.info("  输入: %s", device_summary(input_id))
+    logger.info("  输出: %s", device_summary(output_id))

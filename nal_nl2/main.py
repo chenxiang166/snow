@@ -10,12 +10,34 @@ import sys
 import os
 import logging
 
-# 配置日志
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s [%(levelname)s] %(name)s: %(message)s',
-    datefmt='%H:%M:%S',
-)
+def _log_path() -> str | None:
+    try:
+        base_dir = os.environ.get('LOCALAPPDATA') or os.path.expanduser('~')
+        log_dir = os.path.join(base_dir, 'PC-Audio-Comp')
+        os.makedirs(log_dir, exist_ok=True)
+        return os.path.join(log_dir, 'app.log')
+    except Exception:
+        return None
+
+
+def _configure_logging():
+    handlers = [logging.StreamHandler()]
+    path = _log_path()
+    if path:
+        try:
+            handlers.append(logging.FileHandler(path, encoding='utf-8'))
+        except Exception:
+            pass
+
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s [%(levelname)s] %(name)s: %(message)s',
+        datefmt='%H:%M:%S',
+        handlers=handlers,
+    )
+
+
+_configure_logging()
 logger = logging.getLogger('main')
 
 # 确保项目根目录在路径中
@@ -914,11 +936,14 @@ class MainWindow(QMainWindow):
     def _start_processing(self):
         self._update_gains()
 
-        # 使用用户选择的输出设备
+        # 使用用户选择的输出设备, 无效时用自动检测
         selected_id = self._device_combo.currentData()
         if selected_id is not None and selected_id >= 0:
             self._stream._output_id = selected_id
-            logger.info(f"使用输出设备: [{selected_id}]")
+            logger.info(f"使用输出设备: {lb.device_summary(selected_id)}")
+        else:
+            # 下拉无效时, 重置为 None 让 start() 自动检测
+            self._stream._output_id = None
 
         if self._stream.start():
             self._btn_start.setVisible(False)
@@ -926,9 +951,19 @@ class MainWindow(QMainWindow):
             self._status_label.setText("● 运行中")
             self._status_label.setStyleSheet("color: #3fb950;")
         else:
+            detail = self._stream.last_error or "未返回具体错误。"
+            log_hint = _log_path()
+            log_text = f"\n\n诊断日志：{log_hint}" if log_hint else ""
             QMessageBox.warning(
                 self, "启动失败",
-                "无法启动音频处理。\n请检查音频设备连接。"
+                "无法启动音频处理。\n\n"
+                f"{detail}\n\n"
+                "请优先检查：\n"
+                "1. VB-Cable 驱动是否已安装，安装后是否重启过 Windows。\n"
+                "2. Windows 设置 → 隐私和安全性 → 麦克风，是否允许桌面应用访问。\n"
+                "3. 扬声器/耳机是否已连接并启用，输出设备不要选 CABLE Input。\n"
+                "4. 若使用蓝牙耳机，先切到立体声播放模式或换有线耳机测试。"
+                f"{log_text}"
             )
 
     def _stop_processing(self):
@@ -960,10 +995,12 @@ class MainWindow(QMainWindow):
             default_output = sd.default.device[1] if sd.default.device[1] >= 0 else None
 
             # 确定输入设备的 hostapi (只显示兼容的设备)
-            from audio.loopback import find_input_device
+            from audio.loopback import find_input_device, find_output_device_for_input
+            auto_output = None
             try:
-                input_id, _ = find_input_device()
+                input_id, input_mode = find_input_device()
                 target_api = devices[input_id]['hostapi']
+                auto_output = find_output_device_for_input(input_id, input_mode)
             except:
                 target_api = None
 
@@ -981,11 +1018,16 @@ class MainWindow(QMainWindow):
                 added_names.add(name)
                 label = f"[{i}] {d['name'][:45]}"
                 self._device_combo.addItem(label, i)
-                if i == default_output:
+                if i == auto_output:
                     self._device_combo.setCurrentIndex(self._device_combo.count() - 1)
 
             if self._device_combo.count() == 0:
                 self._device_combo.addItem("无兼容设备", -1)
+            elif auto_output is None and default_output is not None:
+                for idx in range(self._device_combo.count()):
+                    if self._device_combo.itemData(idx) == default_output:
+                        self._device_combo.setCurrentIndex(idx)
+                        break
         except Exception as e:
             logger.warning(f"刷新设备列表失败: {e}")
             self._device_combo.addItem("默认设备", -1)
